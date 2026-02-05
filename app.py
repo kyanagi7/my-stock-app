@@ -39,7 +39,6 @@ def get_stock_data(ticker):
     df['Lower'] = df['MA20'] - (df['STD20'] * 2)
     return name, df
 
-# --- 判定ロジック関数 ---
 def get_advice(current_price, rsi, upper, lower):
     if rsi >= 70 or current_price >= upper:
         return "⚠️ 売り検討", "過熱気味です。利益確定を検討するか、新規購入は控えましょう。", "error"
@@ -61,20 +60,19 @@ for ticker, config in TICKERS_CONFIG.items():
             upper_val = float(df['Upper'].iloc[-1])
             lower_val = float(df['Lower'].iloc[-1])
 
-            # 【新機能】判定アドバイスの表示
+            # 判定アドバイス
             status, message, type_style = get_advice(current_price, rsi_val, upper_val, lower_val)
             st.subheader(f"判定: {status}")
             if type_style == "success": st.success(message)
             elif type_style == "error": st.error(message)
             else: st.info(message)
 
-            # メトリクス表示
             c1, c2, c3 = st.columns(3)
             c1.metric("現在値", f"¥{current_price:,.1f}")
             c2.metric(f"{target_type}目標", f"¥{target_price:,.0f}")
             c3.metric("RSI", f"{rsi_val:.1f}")
 
-            # --- AI予測 & グラフ描画 (前回と同様) ---
+            # AI予測
             df_p = df['Close'].reset_index()
             df_p.columns = ['ds', 'y']
             df_p['ds'] = pd.to_datetime(df_p['ds']).dt.tz_localize(None)
@@ -82,22 +80,35 @@ for ticker, config in TICKERS_CONFIG.items():
             forecast = model.predict(model.make_future_dataframe(periods=14))
             
             fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, row_heights=[0.7, 0.3])
-            hist_plot = df.tail(40)
-            fig.add_trace(go.Scatter(x=hist_plot.index, y=hist_plot['Close'], name='実績', line=dict(color='black')), row=1, col=1)
-            fig.add_trace(go.Scatter(x=hist_plot.index, y=hist_plot['Upper'], name='BB上', line=dict(width=0), showlegend=False), row=1, col=1)
-            fig.add_trace(go.Scatter(x=hist_plot.index, y=hist_plot['Lower'], name='BB下', line=dict(width=0), fill='tonexty', fillcolor='rgba(173,216,230,0.2)', showlegend=False), row=1, col=1)
+            hist_plot = df.tail(45)
             
+            # --- メインチャートの色変更 ---
+            # 実績線を太めのロイヤルブルーに変更
+            fig.add_trace(go.Scatter(x=hist_plot.index, y=hist_plot['Close'], name='実績', 
+                                     line=dict(color='#0055FF', width=3)), row=1, col=1)
+            
+            # ボリンジャーバンド
+            fig.add_trace(go.Scatter(x=hist_plot.index, y=hist_plot['Upper'], name='BB上', line=dict(width=0), showlegend=False), row=1, col=1)
+            fig.add_trace(go.Scatter(x=hist_plot.index, y=hist_plot['Lower'], name='BB下', line=dict(width=0), fill='tonexty', fillcolor='rgba(0,150,255,0.1)', showlegend=False), row=1, col=1)
+            
+            # 目標線
             line_color = "#28a745" if target_type == '購入' else "#dc3545"
             fig.add_hline(y=target_price, line_dash="dash", line_color=line_color, row=1, col=1)
             
+            # 予測線をオレンジのドットに変更
             fore_plot = forecast[forecast['ds'] > hist_plot.index[-1]].head(8)
-            fig.add_trace(go.Scatter(x=fore_plot['ds'], y=fore_plot['yhat'], name='予測', line=dict(color='#0066ff', dash='dot')), row=1, col=1)
+            fig.add_trace(go.Scatter(x=fore_plot['ds'], y=fore_plot['yhat'], name='予測', 
+                                     line=dict(color='#FF8C00', dash='dot', width=2)), row=1, col=1)
             
-            fig.add_trace(go.Scatter(x=hist_plot.index, y=hist_plot['RSI'], name='RSI', line=dict(color='purple')), row=2, col=1)
-            fig.add_hline(y=70, line_dash="dot", line_color="red", row=2, col=1)
-            fig.add_hline(y=30, line_dash="dot", line_color="blue", row=2, col=1)
-            fig.update_layout(height=450, margin=dict(l=0,r=0,b=0,t=10), showlegend=False)
+            # RSIチャート
+            fig.add_trace(go.Scatter(x=hist_plot.index, y=hist_plot['RSI'], name='RSI', line=dict(color='#8A2BE2')), row=2, col=1)
+            fig.add_hline(y=70, line_dash="dot", line_color="#FF4B4B", row=2, col=1)
+            fig.add_hline(y=30, line_dash="dot", line_color="#4B4BFF", row=2, col=1)
+            
+            fig.update_layout(height=480, margin=dict(l=0,r=0,b=0,t=10), showlegend=False, hovermode="x unified")
             st.plotly_chart(fig, use_container_width=True)
+
+            st.write(f"🔮 **AI予想:** 今晩 ¥{forecast.iloc[len(df_p)]['yhat']:,.1f} / 来週 ¥{forecast.iloc[len(df_p)+6]['yhat']:,.1f}")
 
         except Exception as e:
             st.error(f"分析失敗: {e}")
