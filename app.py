@@ -5,23 +5,22 @@ import plotly.graph_objects as go
 from prophet import Prophet
 from datetime import datetime, timedelta
 
-# --- 1. 銘柄と目標単価の設定 ---
-# '銘柄コード': 目標金額
+# --- 1. 銘柄と目標の設定 ---
+# '銘柄コード': [目標金額, '購入' または '売却']
 TICKERS_CONFIG = {
-    '5970.T': 1970,
-    '7272.T': 1075,
-    '8306.T': 2950,
-    '8316.T': 5470,
-    '9101.T': 4950,
+    '5970.T': [2070, '売却'],
+    '7272.T': [1225, '売却'],
+    '8306.T': [3050, '売却'],
+    '8316.T': [5700, '売却'],
+    '9101.T': [4950, '購入'],
 }
 
 st.set_page_config(page_title="Stock Target Tracker", layout="centered")
-st.title("📈 銘柄別・目標株価管理")
+st.title("📈 銘柄別・売買目標管理")
 
 @st.cache_data(ttl=600)
 def get_stock_info(ticker):
     tk = yf.Ticker(ticker)
-    # 銘柄名を取得
     long_name = tk.info.get('longName', ticker)
     df = tk.history(period="2y")
     if df.empty:
@@ -29,7 +28,9 @@ def get_stock_info(ticker):
     return long_name, df['Close']
 
 # --- メイン処理 ---
-for ticker, target_price in TICKERS_CONFIG.items():
+for ticker, config in TICKERS_CONFIG.items():
+    target_price = config[0]
+    target_type = config[1] # '購入' or '売却'
     
     with st.spinner(f'{ticker} を読み込み中...'):
         name, prices = get_stock_info(ticker)
@@ -46,20 +47,32 @@ for ticker, target_price in TICKERS_CONFIG.items():
             prev_price = float(prices.iloc[-2])
             diff = current_price - prev_price
             
-            # 目標値との比較計算
+            # --- 目標判定ロジック ---
             dist_to_target = current_price - target_price
-            dist_percent = (dist_to_target / target_price) * 100
+            dist_percent = (abs(dist_to_target) / target_price) * 100
 
-            # --- 現在値と目標値の表示 ---
+            # 達成条件の判定
+            is_achieved = False
+            if target_type == '購入':
+                if current_price <= target_price:
+                    is_achieved = True
+            else: # 売却
+                if current_price >= target_price:
+                    is_achieved = True
+
+            # 表示
             c1, c2 = st.columns(2)
             c1.metric("現在値", f"{unit}{current_price:,.1f}", f"{diff:+,.1f}")
-            c2.metric("目標単価", f"{unit}{target_price:,.0f}")
+            c2.metric(f"{target_type}目標", f"{unit}{target_price:,.0f}")
             
-            # 目標までの進捗をメッセージ表示
-            if dist_to_target >= 0:
-                st.success(f"🎉 目標達成中！ (目標比: {dist_percent:+.2f}%)")
+            # 達成状況に応じたメッセージと色の出し分け
+            if is_achieved:
+                st.success(f"✨ 【{target_type}判定】目標を達成しています！")
             else:
-                st.info(f"🚀 目標まであと **{unit}{abs(dist_to_target):,.1f}** ({abs(dist_percent):.2f}%)")
+                if target_type == '購入':
+                    st.warning(f"⏳ 【購入待ち】目標まで あと **{unit}{dist_to_target:,.1f}** ({dist_percent:.2f}%) 安くなるのを待機中")
+                else:
+                    st.info(f"🚀 【売却待ち】目標まで あと **{unit}{abs(dist_to_target):,.1f}** ({dist_percent:.2f}%) の上昇が必要です")
 
             # --- AI予測 (Prophet) ---
             df_p = prices.reset_index()
@@ -80,14 +93,15 @@ for ticker, target_price in TICKERS_CONFIG.items():
             p3.caption("来週")
             p3.write(f"**{unit}{forecast.iloc[len(df_p)+6]['yhat']:,.1f}**")
 
-            # --- グラフ描画（目標線を赤色で表示） ---
+            # --- グラフ描画 ---
             fig = go.Figure()
             hist_plot = df_p.tail(30)
             fig.add_trace(go.Scatter(x=hist_plot['ds'], y=hist_plot['y'], name='実績', line=dict(color='#333')))
             
             # 目標価格の横線
-            fig.add_hline(y=target_price, line_dash="dash", line_color="#FF4B4B", 
-                          annotation_text="目標", annotation_position="top left")
+            line_color = "#28a745" if target_type == '購入' else "#dc3545" # 購入なら緑、売却なら赤
+            fig.add_hline(y=target_price, line_dash="dash", line_color=line_color, 
+                          annotation_text=f"{target_type}目標", annotation_position="top left")
             
             fore_plot = forecast[forecast['ds'] >= hist_plot['ds'].iloc[-1]].head(8)
             fig.add_trace(go.Scatter(x=fore_plot['ds'], y=fore_plot['yhat'], name='予測', line=dict(color='#0066ff', dash='dot')))
