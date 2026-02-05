@@ -5,20 +5,20 @@ import plotly.graph_objects as go
 from prophet import Prophet
 from datetime import datetime, timedelta
 
-# --- İ’èF©•ª‚Ìƒ|[ƒgƒtƒHƒŠƒI ---
-# –Á•¿ƒR[ƒh: •Û—LŠ”” (“ú–{Š”‚Í .T ‚ğ‚Â‚¯‚é)
+# --- è¨­å®šï¼šè‡ªåˆ†ã®ãƒãƒ¼ãƒˆãƒ•ã‚©ãƒªã‚ª ---
+# éŠ˜æŸ„ã‚³ãƒ¼ãƒ‰: ä¿æœ‰æ ªæ•° (æ—¥æœ¬æ ªã¯ .T ã‚’ã¤ã‘ã‚‹)
 MY_PORTFOLIO = {
-    '7203.T': 100,  # ƒgƒˆƒ^©“®Ô
+    '7203.T': 100,  # ãƒˆãƒ¨ã‚¿è‡ªå‹•è»Š
     'AAPL': 10,     # Apple
-    '7974.T': 50,   # ”C“V“°
+    '7974.T': 50,   # ä»»å¤©å ‚
 }
 
 st.set_page_config(page_title="My Stock Dash", layout="centered")
 
-st.title("?? Stock Portfolio & Predict")
+st.title("ğŸ“ˆ Stock Portfolio & Predict")
 st.caption(f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
-@st.cache_data(ttl=3600)  # 1ŠÔ‚ÍƒLƒƒƒbƒVƒ…‚ğ•Û
+@st.cache_data(ttl=3600)  # 1æ™‚é–“ã¯ã‚­ãƒ£ãƒƒã‚·ãƒ¥ã‚’ä¿æŒ
 def load_data(tickers):
     data = yf.download(list(tickers.keys()), period="1y", interval="1d")
     return data['Close']
@@ -26,31 +26,31 @@ def load_data(tickers):
 try:
     prices = load_data(MY_PORTFOLIO)
     
-    # ‘Y‘Šz‚ÌŒvZ
+    # è³‡ç”£ç·é¡ã®è¨ˆç®—
     portfolio_val = (prices * pd.Series(MY_PORTFOLIO)).sum(axis=1)
     current_val = portfolio_val.iloc[-1]
     prev_val = portfolio_val.iloc[-2]
     change = current_val - prev_val
 
-    # --- ƒƒgƒŠƒNƒX•\¦ (iPhone‚ÅŒ©‚â‚·‚¢‰¡•À‚Ñ) ---
+    # --- ãƒ¡ãƒˆãƒªã‚¯ã‚¹è¡¨ç¤º (iPhoneã§è¦‹ã‚„ã™ã„æ¨ªä¸¦ã³) ---
     col1, col2 = st.columns(2)
-    col1.metric("‘‘YŠz", f"\{current_val:,.0f}")
-    col2.metric("‘O“ú”ä", f"{change:+,.0f}", f"{(change/prev_val)*100:.2f}%")
+    col1.metric("ç·è³‡ç”£é¡", f"Â¥{current_val:,.0f}")
+    col2.metric("å‰æ—¥æ¯”", f"{change:+,.0f}", f"{(change/prev_val)*100:.2f}%")
 
-    # --- ‰ß‹‚Ì„ˆÚƒOƒ‰ƒt ---
+    # --- éå»ã®æ¨ç§»ã‚°ãƒ©ãƒ• ---
     st.subheader("Asset History")
     fig_hist = go.Figure()
     fig_hist.add_trace(go.Scatter(x=portfolio_val.index, y=portfolio_val, mode='lines', name='Total Value'))
     fig_hist.update_layout(margin=dict(l=0, r=0, t=0, b=0), height=300, hovermode="x unified")
     st.plotly_chart(fig_hist, use_container_width=True)
 
-    # --- AI—\‘ª (Prophet) ---
+    # --- AIäºˆæ¸¬ (Prophet) ---
     st.subheader("Forecast (1 Week)")
     
-    # —\‘ª—pƒf[ƒ^‚Ì®Œ`
+    # äºˆæ¸¬ç”¨ãƒ‡ãƒ¼ã‚¿ã®æ•´å½¢
     df_p = portfolio_val.reset_index()
     df_p.columns = ['ds', 'y']
-    df_p['ds'] = df_p['ds'].dt.tz_localize(None) # ƒ^ƒCƒ€ƒ][ƒ“‰ğœ
+    df_p['ds'] = df_p['ds'].dt.tz_localize(None) # ã‚¿ã‚¤ãƒ ã‚¾ãƒ¼ãƒ³è§£é™¤
 
     model = Prophet(daily_seasonality=True, changepoint_prior_scale=0.05)
     model.fit(df_p)
@@ -58,25 +58,25 @@ try:
     future = model.make_future_dataframe(periods=7)
     forecast = model.predict(future)
 
-    # —\‘ªƒOƒ‰ƒt‚Ìì¬
+    # äºˆæ¸¬ã‚°ãƒ©ãƒ•ã®ä½œæˆ
     fig_fore = go.Figure()
-    # ÀÑ
+    # å®Ÿç¸¾
     fig_fore.add_trace(go.Scatter(x=df_p['ds'], y=df_p['y'], name='Actual', line=dict(color='gray')))
-    # —\‘ª
+    # äºˆæ¸¬
     fig_fore.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], name='Forecast', line=dict(color='blue')))
-    # —\‘ª‚Ì• (M—Š‹æŠÔ)
+    # äºˆæ¸¬ã®å¹… (ä¿¡é ¼åŒºé–“)
     fig_fore.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'], fill='tonexty', mode='none', name='Upper', fillcolor='rgba(0,0,255,0.1)'))
     fig_fore.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_lower'], fill='tonexty', mode='none', name='Lower', fillcolor='rgba(0,0,255,0.1)'))
     
     fig_fore.update_layout(margin=dict(l=0, r=0, t=0, b=0), height=300, showlegend=False)
-    # —\‘ª”ÍˆÍi’¼‹ß30“ú{–¢—ˆ7“új‚ÉƒY[ƒ€
+    # äºˆæ¸¬ç¯„å›²ï¼ˆç›´è¿‘30æ—¥ï¼‹æœªæ¥7æ—¥ï¼‰ã«ã‚ºãƒ¼ãƒ 
     fig_fore.update_xaxes(range=[datetime.now() - timedelta(days=30), datetime.now() + timedelta(days=7)])
     st.plotly_chart(fig_fore, use_container_width=True)
 
-    # –{“ú‚Ì—\‘z‚Æ¡T––‚Ì—\‘z
+    # æœ¬æ—¥ã®äºˆæƒ³ã¨ä»Šé€±æœ«ã®äºˆæƒ³
     today_pred = forecast.iloc[-7]['yhat']
     weekend_pred = forecast.iloc[-1]['yhat']
-    st.info(f"?? **–{“ú–é‚Ì—\‘ª’l:** \{today_pred:,.0f}\n\n?? **¡T––‚Ì—\‘ª’l:** \{weekend_pred:,.0f}")
+    st.info(f"ğŸ“ **æœ¬æ—¥å¤œã®äºˆæ¸¬å€¤:** Â¥{today_pred:,.0f}\n\nğŸ“ **ä»Šé€±æœ«ã®äºˆæ¸¬å€¤:** Â¥{weekend_pred:,.0f}")
 
 except Exception as e:
-    st.error(f"ƒf[ƒ^‚Ìæ“¾‚É¸”s‚µ‚Ü‚µ‚½B–Á•¿ƒR[ƒh‚ğŠm”F‚µ‚Ä‚­‚¾‚³‚¢B: {e}")
+    st.error(f"ãƒ‡ãƒ¼ã‚¿ã®å–å¾—ã«å¤±æ•—ã—ã¾ã—ãŸã€‚éŠ˜æŸ„ã‚³ãƒ¼ãƒ‰ã‚’ç¢ºèªã—ã¦ãã ã•ã„ã€‚: {e}")
