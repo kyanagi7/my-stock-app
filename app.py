@@ -74,4 +74,23 @@ for ticker in TICKERS:
             p1.caption("本日夜")
             p1.write(f"**{unit}{pred_tonight:,.1f}**")
             p2.caption("明日")
-            p2.write(f"**{unit}{pred_tomorrow:,.1f}
+            p2.write(f"**{unit}{pred_tomorrow:,.1f}**")
+            p3.caption("来週")
+            p3.write(f"**{unit}{pred_next_week:,.1f}**")
+
+            # --- グラフ描画 ---
+            fig = go.Figure()
+            hist_plot = df_p.tail(30)
+            fig.add_trace(go.Scatter(x=hist_plot['ds'], y=hist_plot['y'], name='実績', line=dict(color='#333')))
+            fore_plot = forecast[forecast['ds'] >= hist_plot['ds'].iloc[-1]].head(8)
+            fig.add_trace(go.Scatter(x=fore_plot['ds'], y=fore_plot['yhat'], name='予測', line=dict(color='#0066ff', dash='dot')))
+            
+            # 予測の幅（信頼区間）
+            fig.add_trace(go.Scatter(x=fore_plot['ds'], y=fore_plot['yhat_upper'], fill='tonexty', mode='none', fillcolor='rgba(0,102,255,0.1)', showlegend=False))
+            fig.add_trace(go.Scatter(x=fore_plot['ds'], y=fore_plot['yhat_lower'], fill='tonexty', mode='none', fillcolor='rgba(0,102,255,0.1)', showlegend=False))
+            
+            fig.update_layout(height=180, margin=dict(l=0,r=0,b=0,t=10), hovermode="x unified", showlegend=False)
+            st.plotly_chart(fig, use_container_width=True)
+
+        except Exception as e:
+            st.error(f"{ticker} エラー: {e}")
