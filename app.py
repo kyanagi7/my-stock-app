@@ -5,78 +5,80 @@ import plotly.graph_objects as go
 from prophet import Prophet
 from datetime import datetime, timedelta
 
-# --- 設定：自分のポートフォリオ ---
-# 銘柄コード: 保有株数 (日本株は .T をつける)
+# --- 1. ポートフォリオ設定 ---
 MY_PORTFOLIO = {
-    '7203.T': 100,  # トヨタ自動車
+    '7203.T': 100,  # トヨタ
     'AAPL': 10,     # Apple
     '7974.T': 50,   # 任天堂
 }
 
-st.set_page_config(page_title="My Stock Dash", layout="centered")
+st.set_page_config(page_title="Stock Expert", layout="centered")
+st.title("📊 Individual Stock Analysis")
 
-st.title("📈 Stock Portfolio & Predict")
-st.caption(f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+@st.cache_data(ttl=3600)
+def get_data(ticker):
+    df = yf.download(ticker, period="2y", interval="1d")
+    return df['Close']
 
-@st.cache_data(ttl=3600)  # 1時間はキャッシュを保持
-def load_data(tickers):
-    data = yf.download(list(tickers.keys()), period="1y", interval="1d")
-    return data['Close']
+# --- メイン処理 ---
+for ticker, shares in MY_PORTFOLIO.items():
+    with st.expander(f"📌 {ticker} (保有: {shares}株)", expanded=True):
+        try:
+            # データ取得
+            prices = get_data(ticker)
+            current_price = prices.iloc[-1]
+            
+            # --- 変動率の計算 ---
+            change_today = (current_price / prices.iloc[-2] - 1) * 100
+            change_week = (current_price / prices.iloc[-5] - 1) * 100
+            change_month = (current_price / prices.iloc[-21] - 1) * 100
 
-try:
-    prices = load_data(MY_PORTFOLIO)
-    
-    # 資産総額の計算
-    portfolio_val = (prices * pd.Series(MY_PORTFOLIO)).sum(axis=1)
-    current_val = portfolio_val.iloc[-1]
-    prev_val = portfolio_val.iloc[-2]
-    change = current_val - prev_val
+            # 実績メトリクス表示
+            m1, m2, m3 = st.columns(3)
+            m1.metric("本日", f"{change_today:+.2f}%")
+            m2.metric("今週", f"{change_week:+.2f}%")
+            m3.metric("1ヶ月", f"{change_month:+.2f}%")
 
-    # --- メトリクス表示 (iPhoneで見やすい横並び) ---
-    col1, col2 = st.columns(2)
-    col1.metric("総資産額", f"¥{current_val:,.0f}")
-    col2.metric("前日比", f"{change:+,.0f}", f"{(change/prev_val)*100:.2f}%")
+            # --- AI予測 (Prophet) ---
+            df_p = prices.reset_index()
+            df_p.columns = ['ds', 'y']
+            df_p['ds'] = df_p['ds'].dt.tz_localize(None)
 
-    # --- 過去の推移グラフ ---
-    st.subheader("Asset History")
-    fig_hist = go.Figure()
-    fig_hist.add_trace(go.Scatter(x=portfolio_val.index, y=portfolio_val, mode='lines', name='Total Value'))
-    fig_hist.update_layout(margin=dict(l=0, r=0, t=0, b=0), height=300, hovermode="x unified")
-    st.plotly_chart(fig_hist, use_container_width=True)
+            model = Prophet(daily_seasonality=True, changepoint_prior_scale=0.05)
+            model.fit(df_p)
+            future = model.make_future_dataframe(periods=14) # 2週間分予測
+            forecast = model.predict(future)
 
-    # --- AI予測 (Prophet) ---
-    st.subheader("Forecast (1 Week)")
-    
-    # 予測用データの整形
-    df_p = portfolio_val.reset_index()
-    df_p.columns = ['ds', 'y']
-    df_p['ds'] = df_p['ds'].dt.tz_localize(None) # タイムゾーン解除
+            # 予測値の抽出
+            # yhatが予測の中央値
+            pred_tonight = forecast.iloc[-14]['yhat'] # 本日（最新データから1日後相当）
+            pred_tomorrow = forecast.iloc[-13]['yhat'] # 明日
+            pred_next_week = forecast.iloc[-7]['yhat'] # 1週間後
 
-    model = Prophet(daily_seasonality=True, changepoint_prior_scale=0.05)
-    model.fit(df_p)
-    
-    future = model.make_future_dataframe(periods=7)
-    forecast = model.predict(future)
+            # 予測メトリクス表示
+            st.write("🔮 **AI予測価格**")
+            p1, p2, p3 = st.columns(3)
+            p1.caption("本日夜")
+            p1.write(f"**{pred_tonight:,.1f}**")
+            p2.caption("明日")
+            p2.write(f"**{pred_tomorrow:,.1f}**")
+            p3.caption("来週")
+            p3.write(f"**{pred_next_week:,.1f}**")
 
-    # 予測グラフの作成
-    fig_fore = go.Figure()
-    # 実績
-    fig_fore.add_trace(go.Scatter(x=df_p['ds'], y=df_p['y'], name='Actual', line=dict(color='gray')))
-    # 予測
-    fig_fore.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], name='Forecast', line=dict(color='blue')))
-    # 予測の幅 (信頼区間)
-    fig_fore.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'], fill='tonexty', mode='none', name='Upper', fillcolor='rgba(0,0,255,0.1)'))
-    fig_fore.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_lower'], fill='tonexty', mode='none', name='Lower', fillcolor='rgba(0,0,255,0.1)'))
-    
-    fig_fore.update_layout(margin=dict(l=0, r=0, t=0, b=0), height=300, showlegend=False)
-    # 予測範囲（直近30日＋未来7日）にズーム
-    fig_fore.update_xaxes(range=[datetime.now() - timedelta(days=30), datetime.now() + timedelta(days=7)])
-    st.plotly_chart(fig_fore, use_container_width=True)
+            # --- グラフ描画 ---
+            fig = go.Figure()
+            # 実績（直近30日）
+            hist_30 = df_p.tail(30)
+            fig.add_trace(go.Scatter(x=hist_30['ds'], y=hist_30['y'], name='実績', line=dict(color='#333')))
+            # 予測（未来7日）
+            fore_7 = forecast.tail(14).head(8)
+            fig.add_trace(go.Scatter(x=fore_7['ds'], y=fore_7['yhat'], name='予測', line=dict(color='#0066ff', dash='dot')))
+            # 予測の幅
+            fig.add_trace(go.Scatter(x=fore_7['ds'], y=fore_7['yhat_upper'], fill='tonexty', mode='none', fillcolor='rgba(0,102,255,0.1)', showlegend=False))
+            fig.add_trace(go.Scatter(x=fore_7['ds'], y=fore_7['yhat_lower'], fill='tonexty', mode='none', fillcolor='rgba(0,102,255,0.1)', showlegend=False))
 
-    # 本日の予想と今週末の予想
-    today_pred = forecast.iloc[-7]['yhat']
-    weekend_pred = forecast.iloc[-1]['yhat']
-    st.info(f"📍 **本日夜の予測値:** ¥{today_pred:,.0f}\n\n📍 **今週末の予測値:** ¥{weekend_pred:,.0f}")
+            fig.update_layout(height=250, margin=dict(l=0,r=0,b=0,t=20), hovermode="x unified", showlegend=False)
+            st.plotly_chart(fig, use_container_width=True)
 
-except Exception as e:
-    st.error(f"データの取得に失敗しました。銘柄コードを確認してください。: {e}")
+        except Exception as e:
+            st.warning(f"{ticker} の解析中にエラーが発生しました。")
