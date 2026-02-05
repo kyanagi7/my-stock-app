@@ -82,8 +82,7 @@ for ticker, config in TICKERS_CONFIG.items():
             fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, row_heights=[0.7, 0.3])
             hist_plot = df.tail(45)
             
-            # --- メインチャートの色変更 ---
-            # 実績線を太めのロイヤルブルーに変更
+            # 実績線
             fig.add_trace(go.Scatter(x=hist_plot.index, y=hist_plot['Close'], name='実績', 
                                      line=dict(color='#0055FF', width=3)), row=1, col=1)
             
@@ -95,10 +94,15 @@ for ticker, config in TICKERS_CONFIG.items():
             line_color = "#28a745" if target_type == '購入' else "#dc3545"
             fig.add_hline(y=target_price, line_dash="dash", line_color=line_color, row=1, col=1)
             
-            # 予測線をオレンジのドットに変更
-            fore_plot = forecast[forecast['ds'] > hist_plot.index[-1]].head(8)
+            # --- 【新機能】予測線の色を判定 ---
+            fore_plot = forecast[forecast['ds'] >= hist_plot.index[-1]].head(8)
+            # 未来の予測値（1週間後）が現在の価格より高いか低いか
+            prediction_end_price = fore_plot['yhat'].iloc[-1]
+            # 上昇予測なら赤、下落予測なら青
+            pred_line_color = "#FF0000" if prediction_end_price >= current_price else "#0000FF"
+            
             fig.add_trace(go.Scatter(x=fore_plot['ds'], y=fore_plot['yhat'], name='予測', 
-                                     line=dict(color='#FF8C00', dash='dot', width=2)), row=1, col=1)
+                                     line=dict(color=pred_line_color, dash='dot', width=3)), row=1, col=1)
             
             # RSIチャート
             fig.add_trace(go.Scatter(x=hist_plot.index, y=hist_plot['RSI'], name='RSI', line=dict(color='#8A2BE2')), row=2, col=1)
@@ -108,7 +112,9 @@ for ticker, config in TICKERS_CONFIG.items():
             fig.update_layout(height=480, margin=dict(l=0,r=0,b=0,t=10), showlegend=False, hovermode="x unified")
             st.plotly_chart(fig, use_container_width=True)
 
-            st.write(f"🔮 **AI予想:** 今晩 ¥{forecast.iloc[len(df_p)]['yhat']:,.1f} / 来週 ¥{forecast.iloc[len(df_p)+6]['yhat']:,.1f}")
+            # 予測数値テキストも色分けに合わせた表現に
+            trend_icon = "📈" if prediction_end_price >= current_price else "📉"
+            st.write(f"🔮 **AI予想 {trend_icon}:** 今晩 ¥{forecast.iloc[len(df_p)]['yhat']:,.1f} / 来週 ¥{forecast.iloc[len(df_p)+6]['yhat']:,.1f}")
 
         except Exception as e:
             st.error(f"分析失敗: {e}")
