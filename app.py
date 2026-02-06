@@ -15,25 +15,36 @@ TICKERS_CONFIG = {
     '9101.T': [4950, '購入'],
 }
 
-st.set_page_config(page_title="Stock Trading Advisor", layout="centered")
+st.set_page_config(page_title="Stock Advisor", layout="centered")
 
-# --- CSS: 期間選択ボタンを上部に固定する設定 ---
+# --- CSS: 期間選択ボタンをiPhoneでも確実に追従させる設定 ---
 st.markdown("""
     <style>
-    /* 期間選択のコンテナを画面上部に固定 */
-    div[data-testid="stVerticalBlock"] > div:has(div.stSegmentedControl) {
-        position: sticky;
-        top: 2.8rem;
-        background-color: white;
-        z-index: 1000;
-        padding: 10px 0;
-        border-bottom: 1px solid #ddd;
+    /* 親要素のスクロール制限を解除してstickyを有効にする */
+    [data-testid="stMain"] {
+        overflow: visible !important;
     }
-    .stExpander { border: none !important; }
+    .main .block-container {
+        overflow: visible !important;
+    }
+    
+    /* 期間選択コントロールを最上部に固定 */
+    div[data-testid="stSegmentedControl"] {
+        position: -webkit-sticky; /* Safari対応 */
+        position: sticky;
+        top: 3.5rem; /* Streamlitのヘッダー直下に配置 */
+        z-index: 999;
+        background-color: rgba(255, 255, 255, 0.95);
+        padding: 10px 0 !important;
+        border-bottom: 1px solid #eee;
+    }
+    
+    /* モバイルでの見た目調整 */
+    .stExpander { border: none !important; margin-top: 10px !important; }
     </style>
 """, unsafe_allow_html=True)
 
-st.title("⚖️ 日本株・高度分析ボード")
+st.title("⚖️ 高度分析 & 戦略ボード")
 
 # --- 期間選択設定 ---
 PERIOD_OPTIONS = {
@@ -44,6 +55,7 @@ PERIOD_OPTIONS = {
     "1日": {"days": 1, "interval": "5m", "pred_len": 24, "pred_freq": "5min", "label": "今日の大引け"}
 }
 
+# 追従するボタン
 selected_label = st.segmented_control("表示期間を切り替え", options=list(PERIOD_OPTIONS.keys()), default="1か月")
 v = PERIOD_OPTIONS[selected_label]
 
@@ -62,7 +74,7 @@ def get_stock_data(ticker, interval):
 for ticker, config in TICKERS_CONFIG.items():
     target_price, target_type = config[0], config[1]
     
-    with st.spinner(f'{ticker} を読み込み中...'):
+    with st.spinner(f'{ticker}...'):
         df, prev_close = get_stock_data(ticker, v["interval"])
         tk = yf.Ticker(ticker)
         name = tk.info.get('longName', ticker)
@@ -71,7 +83,6 @@ for ticker, config in TICKERS_CONFIG.items():
 
     with st.expander(f"📌 {name} ({ticker})", expanded=True):
         try:
-            # 1. データのフィルタリング
             last_dt = df.index[-1]
             if selected_label == "1日":
                 day_start = last_dt.replace(hour=9, minute=0, second=0)
@@ -82,7 +93,7 @@ for ticker, config in TICKERS_CONFIG.items():
 
             current_price = float(hist_display['Close'].iloc[-1])
             
-            # 2. テクニカル指標の計算 (BB, RSI)
+            # 1. テクニカル指標の計算
             close_full = df['Close']
             delta = close_full.diff()
             gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
@@ -93,11 +104,11 @@ for ticker, config in TICKERS_CONFIG.items():
             std20 = close_full.rolling(window=20).std()
             upper_s, lower_s = ma20 + (std20 * 2), ma20 - (std20 * 2)
 
-            # 3. 達成度と色の決定
+            # 2. 達成度と色の決定
             is_achieved = (current_price <= target_price) if target_type == '購入' else (current_price >= target_price)
-            metric_color = "#FF4B4B" if is_achieved else "#1F77B4" # 達成＝赤、未達成＝青
+            metric_color = "#FF4B4B" if is_achieved else "#1F77B4"
             
-            # 4. メトリクス表示
+            # 3. メトリクス表示
             price_diff = current_price - prev_close
             price_pct = (price_diff / prev_close) * 100
             target_diff = current_price - target_price
@@ -125,22 +136,20 @@ for ticker, config in TICKERS_CONFIG.items():
                     </div>
                 """, unsafe_allow_html=True)
 
-            # 5. AI予測
+            # 4. AI予測
             df_p = df['Close'].reset_index()
             df_p.columns = ['ds', 'y']
             model = Prophet(daily_seasonality=True, weekly_seasonality=True).fit(df_p)
-            future = model.make_future_dataframe(periods=v["pred_len"], freq=v["pred_freq"])
-            forecast = model.predict(future)
+            forecast = model.predict(model.make_future_dataframe(periods=v["pred_len"], freq=v["pred_freq"]))
 
-            # 6. グラフ作成
+            # 5. グラフ作成
             fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, row_heights=[0.7, 0.3])
             
-            # Row 1: 実績・BB・予測
+            # 実績・ボリンジャーバンド
             fig.add_trace(go.Scatter(x=hist_display.index, y=hist_display['Close'], name='実績', line=dict(color='#0055FF', width=3)), row=1, col=1)
             fig.add_trace(go.Scatter(x=hist_display.index, y=upper_s.loc[hist_display.index], name='BB上', line=dict(width=0), showlegend=False), row=1, col=1)
             fig.add_trace(go.Scatter(x=hist_display.index, y=lower_s.loc[hist_display.index], name='BB下', line=dict(width=0), fill='tonexty', fillcolor='rgba(0,150,255,0.12)', showlegend=False), row=1, col=1)
             
-            # 目標線
             fig.add_hline(y=target_price, line_dash="dash", line_color=("#28a745" if target_type == '購入' else "#dc3545"), row=1, col=1)
             
             # 予測線
@@ -150,20 +159,18 @@ for ticker, config in TICKERS_CONFIG.items():
                 pred_line_c = "#FF0000" if fore_plot['yhat'].iloc[-1] >= current_price else "#0000FF"
                 fig.add_trace(go.Scatter(x=fore_plot['ds'], y=fore_plot['yhat'], name='予測', line=dict(color=pred_line_c, dash='dot', width=3)), row=1, col=1)
 
-            # Row 2: RSI
+            # RSI
             fig.add_trace(go.Scatter(x=hist_display.index, y=rsi_series.loc[hist_display.index], name='RSI', line=dict(color='#8A2BE2', width=2)), row=2, col=1)
-            fig.add_hline(y=70, line_dash="dot", line_color="#FF4B4B", row=2, col=1)
-            fig.add_hline(y=30, line_dash="dot", line_color="#4B4BFF", row=2, col=1)
+            fig.add_hline(y=70, line_dash="dot", line_color="#FF4B4B", opacity=0.5, row=2, col=1)
+            fig.add_hline(y=30, line_dash="dot", line_color="#4B4BFF", opacity=0.5, row=2, col=1)
 
-            # 軸設定 (1日の場合は9:00-15:30に固定)
             if selected_label == "1日":
                 fig.update_xaxes(range=[day_start, day_end], row=1, col=1)
                 fig.update_xaxes(range=[day_start, day_end], row=2, col=1)
 
-            fig.update_layout(height=480, margin=dict(l=0,r=0,b=0,t=10), showlegend=False, hovermode="x unified")
+            fig.update_layout(height=450, margin=dict(l=0,r=0,b=0,t=10), showlegend=False, hovermode="x unified")
             st.plotly_chart(fig, use_container_width=True)
 
-            # 予測テキスト
             pred_p = fore_plot['yhat'].iloc[-1] if not fore_plot.empty else current_price
             st.write(f"🔮 **AI予測 ({v['label']}):** 約 ¥{pred_p:,.1f}")
 
