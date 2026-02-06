@@ -15,9 +15,9 @@ TICKERS_CONFIG = {
     '9101.T': [4950, '購入'],
 }
 
-st.set_page_config(page_title="Stock Trading Advisor", layout="centered")
+st.set_page_config(page_title="Stock Advisor", layout="centered")
 
-# サイドバーに期間選択を配置（これで確実に追従し、スクロールを邪魔しません）
+# サイドバー設定
 st.sidebar.title("📊 設定")
 PERIOD_OPTIONS = {
     "6か月": {"days": 180, "interval": "1d", "pred_len": 14, "pred_freq": "D", "label": "2週間先"},
@@ -39,13 +39,11 @@ def get_stock_data(ticker, interval):
     df = tk.history(period=period_map[interval], interval=interval)
     if not df.empty:
         df.index = df.index.tz_convert('Asia/Tokyo').tz_localize(None)
-    # 前日比計算用
     hist_daily = tk.history(period="5d", interval="1d")
     prev_close = hist_daily['Close'].iloc[-2] if len(hist_daily) > 1 else df['Close'].iloc[0]
     return df, prev_close
 
 def get_advice(current_price, rsi, upper, lower):
-    """テクニカル判定ロジック"""
     if rsi >= 70 or current_price >= upper:
         return "⚠️ 売り検討", "過熱気味です。利益確定を検討するか、新規購入は控えましょう。", "error"
     elif rsi <= 30 or current_price <= lower:
@@ -57,7 +55,7 @@ def get_advice(current_price, rsi, upper, lower):
 for ticker, config in TICKERS_CONFIG.items():
     target_price, target_type = config[0], config[1]
     
-    with st.spinner(f'{ticker} を読み込み中...'):
+    with st.spinner(f'{ticker}...'):
         df, prev_close = get_stock_data(ticker, v["interval"])
         tk = yf.Ticker(ticker)
         name = tk.info.get('longName', ticker)
@@ -90,9 +88,7 @@ for ticker, config in TICKERS_CONFIG.items():
 
             # 3. 判定とアドバイス
             current_rsi = rsi_series.iloc[-1]
-            current_upper = upper_s.iloc[-1]
-            current_lower = lower_s.iloc[-1]
-            status, advice_msg, style = get_advice(current_price, current_rsi, current_upper, current_lower)
+            status, advice_msg, style = get_advice(current_price, current_rsi, upper_s.iloc[-1], lower_s.iloc[-1])
 
             if style == "success": st.success(f"**判定: {status}** \n{advice_msg}")
             elif style == "error": st.error(f"**判定: {status}** \n{advice_msg}")
@@ -101,33 +97,25 @@ for ticker, config in TICKERS_CONFIG.items():
             # 4. メトリクス表示 (色分け)
             is_achieved = (current_price <= target_price) if target_type == '購入' else (current_price >= target_price)
             metric_color = "#FF4B4B" if is_achieved else "#1F77B4"
+            rsi_color = "#FF4B4B" if current_rsi >= 70 else ("#1F77B4" if current_rsi <= 30 else "#333333")
             
             price_diff = current_price - prev_close
             price_pct = (price_diff / prev_close) * 100
             target_diff = current_price - target_price
             target_pct = (target_diff / target_price) * 100
 
-            c1, c2 = st.columns([1.2, 1])
+            c1, c2, c3 = st.columns([1.2, 1, 0.8])
             with c1:
-                st.markdown(f"""
-                    <div style="line-height:1.2;">
-                        <p style="margin:0; font-size:0.9rem; color:gray;">現在値 (前日比)</p>
-                        <p style="margin:0; font-size:1.8rem; font-weight:bold;">¥{current_price:,.1f}</p>
-                        <p style="margin:0; font-size:1.0rem; color:{metric_color}; font-weight:bold;">
-                            {price_diff:+,.1f} ({price_pct:+.2f}%)
-                        </p>
-                    </div>
-                """, unsafe_allow_html=True)
+                st.markdown(f"""<div style="line-height:1.2;"><p style="margin:0; font-size:0.8rem; color:gray;">現在値 (前日比)</p>
+                    <p style="margin:0; font-size:1.6rem; font-weight:bold;">¥{current_price:,.1f}</p>
+                    <p style="margin:0; font-size:0.9rem; color:{metric_color}; font-weight:bold;">{price_diff:+,.1f} ({price_pct:+.2f}%)</p></div>""", unsafe_allow_html=True)
             with c2:
-                st.markdown(f"""
-                    <div style="line-height:1.2;">
-                        <p style="margin:0; font-size:0.8rem; color:gray;">{target_type}目標 (目標差)</p>
-                        <p style="margin:0; font-size:1.2rem; font-weight:bold;">¥{target_price:,.0f}</p>
-                        <p style="margin:0; font-size:0.9rem; color:{metric_color}; font-weight:bold;">
-                            {target_diff:+,.1f} ({target_pct:+.2f}%)
-                        </p>
-                    </div>
-                """, unsafe_allow_html=True)
+                st.markdown(f"""<div style="line-height:1.2;"><p style="margin:0; font-size:0.8rem; color:gray;">{target_type}目標</p>
+                    <p style="margin:0; font-size:1.2rem; font-weight:bold;">¥{target_price:,.0f}</p>
+                    <p style="margin:0; font-size:0.9rem; color:{metric_color}; font-weight:bold;">{target_diff:+,.1f} ({target_pct:+.2f}%)</p></div>""", unsafe_allow_html=True)
+            with c3:
+                st.markdown(f"""<div style="line-height:1.2;"><p style="margin:0; font-size:0.8rem; color:gray;">RSI</p>
+                    <p style="margin:0; font-size:1.6rem; font-weight:bold; color:{rsi_color};">{current_rsi:.1f}</p></div>""", unsafe_allow_html=True)
 
             # 5. AI予測
             df_p = df['Close'].reset_index()
@@ -137,23 +125,18 @@ for ticker, config in TICKERS_CONFIG.items():
 
             # 6. グラフ作成
             fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, row_heights=[0.7, 0.3])
-            
-            # ボリンジャーバンド & 実績
             fig.add_trace(go.Scatter(x=hist_display.index, y=upper_s.loc[hist_display.index], name='BB上', line=dict(width=0), showlegend=False), row=1, col=1)
             fig.add_trace(go.Scatter(x=hist_display.index, y=lower_s.loc[hist_display.index], name='BB下', line=dict(width=0), fill='tonexty', fillcolor='rgba(0,150,255,0.1)', showlegend=False), row=1, col=1)
             fig.add_trace(go.Scatter(x=hist_display.index, y=hist_display['Close'], name='実績', line=dict(color='#0055FF', width=3)), row=1, col=1)
             
-            # 目標線
             fig.add_hline(y=target_price, line_dash="dash", line_color=("#28a745" if target_type == '購入' else "#dc3545"), row=1, col=1)
             
-            # 予測線
             fore_plot = forecast[forecast['ds'] >= hist_display.index[-1]].head(v["pred_len"] + 1)
             if selected_label == "1日": fore_plot = fore_plot[fore_plot['ds'] <= day_end]
             if not fore_plot.empty:
                 pred_c = "#FF0000" if fore_plot['yhat'].iloc[-1] >= current_price else "#0000FF"
                 fig.add_trace(go.Scatter(x=fore_plot['ds'], y=fore_plot['yhat'], name='予測', line=dict(color=pred_c, dash='dot', width=3)), row=1, col=1)
 
-            # RSI
             fig.add_trace(go.Scatter(x=hist_display.index, y=rsi_series.loc[hist_display.index], name='RSI', line=dict(color='#8A2BE2', width=2)), row=2, col=1)
             fig.add_hline(y=70, line_dash="dot", line_color="#FF4B4B", opacity=0.5, row=2, col=1)
             fig.add_hline(y=30, line_dash="dot", line_color="#4B4BFF", opacity=0.5, row=2, col=1)
