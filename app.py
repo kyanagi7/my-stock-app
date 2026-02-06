@@ -18,10 +18,28 @@ TICKERS_CONFIG = {
 st.set_page_config(page_title="Stock Trading Advisor", layout="centered")
 st.title("⚖️ テクニカル自動判定 & 株価予測")
 
+# --- 期間切り替え用設定 ---
+PERIOD_OPTIONS = {
+    "6か月": 180,
+    "3か月": 90,
+    "1か月": 30,
+    "1週間": 7,
+    "1日": 2
+}
+
+# 画面上部に期間選択ボタンを配置
+selected_label = st.segmented_control(
+    "表示期間を選択", 
+    options=list(PERIOD_OPTIONS.keys()), 
+    default="1か月"
+)
+view_days = PERIOD_OPTIONS[selected_label]
+
 @st.cache_data(ttl=600)
 def get_stock_data(ticker):
     tk = yf.Ticker(ticker)
     name = tk.info.get('longName', ticker)
+    # 2年分取得（予測モデルの精度維持のため）
     df = tk.history(period="2y")
     if df.empty:
         return None, None
@@ -79,8 +97,11 @@ for ticker, config in TICKERS_CONFIG.items():
             model = Prophet(daily_seasonality=True).fit(df_p)
             forecast = model.predict(model.make_future_dataframe(periods=14))
             
+            # --- グラフ描画（期間切り替え対応） ---
             fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, row_heights=[0.7, 0.3])
-            hist_plot = df.tail(45)
+            
+            # 選択された期間でフィルタリング
+            hist_plot = df.tail(view_days)
             
             # 実績線
             fig.add_trace(go.Scatter(x=hist_plot.index, y=hist_plot['Close'], name='実績', 
@@ -94,11 +115,9 @@ for ticker, config in TICKERS_CONFIG.items():
             line_color = "#28a745" if target_type == '購入' else "#dc3545"
             fig.add_hline(y=target_price, line_dash="dash", line_color=line_color, row=1, col=1)
             
-            # --- 【新機能】予測線の色を判定 ---
+            # 予測線の色判定
             fore_plot = forecast[forecast['ds'] >= hist_plot.index[-1]].head(8)
-            # 未来の予測値（1週間後）が現在の価格より高いか低いか
             prediction_end_price = fore_plot['yhat'].iloc[-1]
-            # 上昇予測なら赤、下落予測なら青
             pred_line_color = "#FF0000" if prediction_end_price >= current_price else "#0000FF"
             
             fig.add_trace(go.Scatter(x=fore_plot['ds'], y=fore_plot['yhat'], name='予測', 
@@ -112,7 +131,6 @@ for ticker, config in TICKERS_CONFIG.items():
             fig.update_layout(height=480, margin=dict(l=0,r=0,b=0,t=10), showlegend=False, hovermode="x unified")
             st.plotly_chart(fig, use_container_width=True)
 
-            # 予測数値テキストも色分けに合わせた表現に
             trend_icon = "📈" if prediction_end_price >= current_price else "📉"
             st.write(f"🔮 **AI予想 {trend_icon}:** 今晩 ¥{forecast.iloc[len(df_p)]['yhat']:,.1f} / 来週 ¥{forecast.iloc[len(df_p)+6]['yhat']:,.1f}")
 
