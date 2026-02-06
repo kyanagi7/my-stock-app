@@ -4,7 +4,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from prophet import Prophet
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # --- 1. 銘柄と目標設定 ---
 TICKERS_CONFIG = {
@@ -16,15 +16,15 @@ TICKERS_CONFIG = {
 }
 
 st.set_page_config(page_title="Stock Trading Advisor", layout="centered")
-st.title("⚖️ テクニカル自動判定 & 株価予測")
+st.title("⚖️ テクニカル判定 & 同期予測")
 
-# --- 期間切り替え用設定 ---
+# --- 表示と予測の連動設定 ---
 PERIOD_OPTIONS = {
-    "6か月": {"days": 180, "interval": "1d"},
-    "3か月": {"days": 90, "interval": "1d"},
-    "1か月": {"days": 30, "interval": "1d"},
-    "1週間": {"days": 7, "interval": "30m"}, # 30分足で滑らかに
-    "1日": {"days": 1, "interval": "5m"}     # 5分足で詳細に
+    "6か月": {"days": 180, "interval": "1d", "pred_len": 14, "pred_freq": "D", "label": "2週間先まで"},
+    "3か月": {"days": 90, "interval": "1d", "pred_len": 10, "pred_freq": "D", "label": "10日先まで"},
+    "1か月": {"days": 30, "interval": "1d", "pred_len": 7, "pred_freq": "D", "label": "1週間先まで"},
+    "1週間": {"days": 7, "interval": "30m", "pred_len": 16, "pred_freq": "30min", "label": "数営業日先まで"},
+    "1日": {"days": 1, "interval": "5m", "pred_len": 24, "pred_freq": "5min", "label": "数時間先まで"}
 }
 
 selected_label = st.segmented_control(
@@ -32,24 +32,14 @@ selected_label = st.segmented_control(
     options=list(PERIOD_OPTIONS.keys()), 
     default="1か月"
 )
-view_conf = PERIOD_OPTIONS[selected_label]
+v = PERIOD_OPTIONS[selected_label]
 
 @st.cache_data(ttl=600)
-def get_display_data(ticker, interval, days):
-    """グラフ表示用のデータを取得（期間に応じて解像度を変える）"""
+def get_stock_data(ticker, interval):
     tk = yf.Ticker(ticker)
-    # yfinanceの仕様に合わせ、1日/1週間の時はperiodを指定
-    period_map = {"5m": "1d", "30m": "7d", "1d": "2y"}
+    # 予測精度のため、短期間表示でも多めにデータを取得
+    period_map = {"5m": "5d", "30m": "15d", "1d": "2y"}
     df = tk.history(period=period_map[interval], interval=interval)
-    if not df.empty:
-        df.index = pd.to_datetime(df.index).tz_localize(None)
-    return df
-
-@st.cache_data(ttl=3600)
-def get_prediction_data(ticker):
-    """AI予測用の長期データを取得（常に1日単位）"""
-    tk = yf.Ticker(ticker)
-    df = tk.history(period="2y", interval="1d")
     if not df.empty:
         df.index = pd.to_datetime(df.index).tz_localize(None)
     return df
@@ -66,86 +56,81 @@ def get_advice(current_price, rsi, upper, lower):
 for ticker, config in TICKERS_CONFIG.items():
     target_price, target_type = config[0], config[1]
     
-    with st.spinner(f'{ticker} を解析中...'):
-        # 予測用データと表示用データを分けて取得
-        df_long = get_prediction_data(ticker)
-        df_display = get_display_data(ticker, view_conf["interval"], view_conf["days"])
+    with st.spinner(f'{ticker} を読み込み中...'):
+        df = get_stock_data(ticker, v["interval"])
         tk = yf.Ticker(ticker)
         name = tk.info.get('longName', ticker)
     
-    if df_long is None or df_display is None: continue
+    if df is None or df.empty: continue
 
     with st.expander(f"📌 {name} ({ticker})", expanded=True):
         try:
-            # 最新の指標計算（表示用データに基づく）
-            # ※RSIやBBの期間設定は、5分足などの場合もそのまま適用
-            close = df_display['Close']
-            current_price = float(close.iloc[-1])
+            # 表示用にフィルタリング
+            hist_display = df.tail(v["days"] if v["interval"] == "1d" else 100) # 分足の場合は直近100件程度
+            current_price = float(hist_display['Close'].iloc[-1])
             
-            # テクニカル指標再計算（表示期間に合わせて）
+            # テクニカル計算（表示範囲のデータを使用）
+            close = df['Close']
             delta = close.diff()
             gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
             loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-            rsi_val = 100 - (100 / (1 + (gain / loss))).iloc[-1]
-            
+            rsi_series = 100 - (100 / (1 + (gain / loss)))
             ma20 = close.rolling(window=20).mean()
             std20 = close.rolling(window=20).std()
-            upper_val = (ma20 + (std20 * 2)).iloc[-1]
-            lower_val = (ma20 - (std20 * 2)).iloc[-1]
+            upper_s, lower_s = ma20 + (std20 * 2), ma20 - (std20 * 2)
 
-            # 判定アドバイス
-            status, message, type_style = get_advice(current_price, rsi_val, upper_val, lower_val)
+            # 判定とメトリクス
+            status, msg, style = get_advice(current_price, rsi_series.iloc[-1], upper_s.iloc[-1], lower_s.iloc[-1])
             st.subheader(f"判定: {status}")
-            if type_style == "success": st.success(message)
-            elif type_style == "error": st.error(message)
-            else: st.info(message)
+            if style == "success": st.success(msg)
+            elif style == "error": st.error(msg)
+            else: st.info(msg)
 
             c1, c2, c3 = st.columns(3)
             c1.metric("現在値", f"¥{current_price:,.1f}")
             c2.metric(f"{target_type}目標", f"¥{target_price:,.0f}")
-            c3.metric("RSI", f"{rsi_val:.1f}")
+            c3.metric("RSI", f"{rsi_series.iloc[-1]:.1f}")
 
-            # AI予測（長期データで行う）
-            df_p = df_long['Close'].reset_index()
+            # --- AI予測（表示解像度と同期） ---
+            df_p = df['Close'].reset_index()
             df_p.columns = ['ds', 'y']
             df_p['ds'] = pd.to_datetime(df_p['ds']).dt.tz_localize(None)
-            model = Prophet(daily_seasonality=True).fit(df_p)
-            forecast = model.predict(model.make_future_dataframe(periods=14))
             
+            # 期間が短い場合は、その分足データで直近のトレンドを予測
+            model = Prophet(daily_seasonality=True, weekly_seasonality=True).fit(df_p)
+            future = model.make_future_dataframe(periods=v["pred_len"], freq=v["pred_freq"])
+            forecast = model.predict(future)
+
             # --- グラフ描画 ---
             fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, row_heights=[0.7, 0.3])
             
-            # 実績線（高解像度データ）
-            fig.add_trace(go.Scatter(x=df_display.index, y=df_display['Close'], name='実績', 
+            # 実績
+            fig.add_trace(go.Scatter(x=hist_display.index, y=hist_display['Close'], name='実績', 
                                      line=dict(color='#0055FF', width=3)), row=1, col=1)
             
-            # ボリンジャーバンド（表示用データで再計算したもの）
-            fig.add_trace(go.Scatter(x=df_display.index, y=ma20 + (std20 * 2), name='BB上', line=dict(width=0), showlegend=False), row=1, col=1)
-            fig.add_trace(go.Scatter(x=df_display.index, y=ma20 - (std20 * 2), name='BB下', line=dict(width=0), fill='tonexty', fillcolor='rgba(0,150,255,0.1)', showlegend=False), row=1, col=1)
+            # ボリンジャーバンド
+            fig.add_trace(go.Scatter(x=hist_display.index, y=upper_s.loc[hist_display.index], name='BB上', line=dict(width=0), showlegend=False), row=1, col=1)
+            fig.add_trace(go.Scatter(x=hist_display.index, y=lower_s.loc[hist_display.index], name='BB下', line=dict(width=0), fill='tonexty', fillcolor='rgba(0,150,255,0.1)', showlegend=False), row=1, col=1)
             
-            # 目標線
-            line_color = "#28a745" if target_type == '購入' else "#dc3545"
-            fig.add_hline(y=target_price, line_dash="dash", line_color=line_color, row=1, col=1)
+            fig.add_hline(y=target_price, line_dash="dash", line_color=("#28a745" if target_type == '購入' else "#dc3545"), row=1, col=1)
             
-            # 予測線（1週間・1日の時は直近のみ表示）
-            fore_plot = forecast[forecast['ds'] >= df_display.index[-1]].head(8)
-            prediction_end_price = fore_plot['yhat'].iloc[-1]
-            pred_line_color = "#FF0000" if prediction_end_price >= current_price else "#0000FF"
-            
+            # 予測線（解像度と期間を同期）
+            fore_plot = forecast[forecast['ds'] >= hist_display.index[-1]].head(v["pred_len"] + 1)
+            pred_color = "#FF0000" if fore_plot['yhat'].iloc[-1] >= current_price else "#0000FF"
             fig.add_trace(go.Scatter(x=fore_plot['ds'], y=fore_plot['yhat'], name='予測', 
-                                     line=dict(color=pred_line_color, dash='dot', width=3)), row=1, col=1)
+                                     line=dict(color=pred_color, dash='dot', width=3)), row=1, col=1)
             
-            # RSIチャート
-            rsi_series = 100 - (100 / (1 + (gain / loss)))
-            fig.add_trace(go.Scatter(x=df_display.index, y=rsi_series, name='RSI', line=dict(color='#8A2BE2')), row=2, col=1)
+            # RSI
+            fig.add_trace(go.Scatter(x=hist_display.index, y=rsi_series.loc[hist_display.index], name='RSI', line=dict(color='#8A2BE2')), row=2, col=1)
             fig.add_hline(y=70, line_dash="dot", line_color="#FF4B4B", row=2, col=1)
             fig.add_hline(y=30, line_dash="dot", line_color="#4B4BFF", row=2, col=1)
             
             fig.update_layout(height=480, margin=dict(l=0,r=0,b=0,t=10), showlegend=False, hovermode="x unified")
             st.plotly_chart(fig, use_container_width=True)
 
-            trend_icon = "📈" if prediction_end_price >= current_price else "📉"
-            st.write(f"🔮 **AI予想 {trend_icon}:** 今晩 ¥{forecast.iloc[len(df_p)]['yhat']:,.1f} / 来週 ¥{forecast.iloc[len(df_p)+6]['yhat']:,.1f}")
+            # 予測メッセージの最適化
+            pred_price = fore_plot['yhat'].iloc[-1]
+            st.write(f"🔮 **AI予測 ({v['label']}):** 約 ¥{pred_price:,.1f} ({'上昇' if pred_price >= current_price else '下落'}傾向)")
 
         except Exception as e:
             st.error(f"分析失敗: {e}")
