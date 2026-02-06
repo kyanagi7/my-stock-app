@@ -31,7 +31,7 @@ PERIOD_OPTIONS = {
 selected_label = st.sidebar.radio("表示期間を選択", options=list(PERIOD_OPTIONS.keys()), index=2)
 v = PERIOD_OPTIONS[selected_label]
 
-st.title("⚖️ 高度分析 & 戦略ボード")
+st.title("⚖️ 株価分析")
 
 @st.cache_data(ttl=600)
 def get_stock_data(ticker, interval):
@@ -154,4 +154,5 @@ for ticker, config in TICKERS_CONFIG.items():
 
         except Exception as e:
             st.error(f"分析失敗: {e}")
+
 
