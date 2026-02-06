@@ -8,11 +8,12 @@ from datetime import datetime, time, timedelta
 
 # --- 1. 銘柄と目標設定 ---
 TICKERS_CONFIG = {
-    '5970.T': [2070, '売却'],
-    '7272.T': [1225, '売却'],
-    '8306.T': [3050, '売却'],
-    '8316.T': [5700, '売却'],
-    '9101.T': [4950, '購入'],
+    '5970.T': [1970, '売却'],
+    '7272.T': [1082, '売却'],
+    '7731.T': [1800, '売却'],
+    '8306.T': [2950, '売却'],
+    '3245.T': [1085, '購入'],
+    '9101.T': [5000, '購入'],
 }
 
 st.set_page_config(page_title="Stock Trading Advisor", layout="centered")
@@ -150,3 +151,4 @@ for ticker, config in TICKERS_CONFIG.items():
 
         except Exception as e:
             st.error(f"分析失敗: {e}")
+
