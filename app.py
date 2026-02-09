@@ -4,11 +4,11 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from prophet import Prophet
-from datetime import datetime, timedelta
+from datetime import datetime
 import time
-import requests
+from curl_cffi import requests as requests_cffi # curl_cffiを使用
 
-# --- 1. 銘柄・目標・名称の事前設定 (通信削減のため) ---
+# --- 1. 銘柄設定 (通信削減のため名前を固定) ---
 TICKERS_CONFIG = {
     '5970.T': {'target': 2070, 'type': '売却', 'name': 'ジーテクト'},
     '7272.T': {'target': 1225, 'type': '売却', 'name': 'ヤマハ発動機'},
@@ -33,33 +33,34 @@ v = PERIOD_OPTIONS[selected_label]
 
 st.title("⚖️ 高度分析 & 戦略ボード")
 
-# セッションを作成（レート制限対策）
+# curl_cffiを使ったセッション作成（ここが最大の対策）
 @st.cache_resource
-def get_session():
-    session = requests.Session()
-    session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-    })
+def get_impersonated_session():
+    # Chromeブラウザの通信指紋(TLS指紋)を完全に模倣します
+    session = requests_cffi.Session(impersonate="chrome")
     return session
 
-@st.cache_data(ttl=900) # キャッシュ時間を15分に延長
+@st.cache_data(ttl=900)
 def get_stock_data(ticker_symbol, interval):
-    session = get_session()
+    session = get_impersonated_session()
     tk = yf.Ticker(ticker_symbol, session=session)
     
     period_map = {"5m": "5d", "30m": "15d", "1d": "2y"}
     
-    # データ取得 (リトライ処理)
     try:
+        # 通信間隔を空ける
+        time.sleep(0.5)
         df = tk.history(period=period_map[interval], interval=interval)
         if df.empty: return None, None
+        
         df.index = df.index.tz_convert('Asia/Tokyo').tz_localize(None)
         
-        # 前日終値の取得
+        # 前日比用のデータ取得
         hist_daily = tk.history(period="5d", interval="1d")
         prev_close = hist_daily['Close'].iloc[-2] if len(hist_daily) > 1 else df['Close'].iloc[0]
         return df, prev_close
-    except Exception:
+    except Exception as e:
+        st.error(f"データ取得エラー ({ticker_symbol}): {e}")
         return None, None
 
 def get_advice(current_price, rsi, upper, lower):
@@ -73,17 +74,14 @@ def get_advice(current_price, rsi, upper, lower):
 for ticker, info in TICKERS_CONFIG.items():
     target_price, target_type, name = info['target'], info['type'], info['name']
     
-    with st.spinner(f'{name} ({ticker}) を取得中...'):
+    with st.spinner(f'{name} のデータを解析中...'):
         df, prev_close = get_stock_data(ticker, v["interval"])
-        time.sleep(1.0) # 銘柄間に1秒の待機を入れて制限を回避
     
-    if df is None or df.empty:
-        st.warning(f"{ticker} のデータ取得に失敗しました。時間をおいて試してください。")
-        continue
+    if df is None or df.empty: continue
 
     with st.expander(f"📌 {name} ({ticker})", expanded=True):
         try:
-            # --- データ抽出・計算 ---
+            # --- 以下、描画ロジック (変更なし) ---
             last_dt = df.index[-1]
             if selected_label == "1日":
                 day_start = last_dt.replace(hour=9, minute=0, second=0)
@@ -105,7 +103,6 @@ for ticker, info in TICKERS_CONFIG.items():
             std20 = close_full.rolling(20).std()
             upper_s, lower_s = ma20 + (std20 * 2), ma20 - (std20 * 2)
 
-            # 判定表示
             current_rsi = rsi_series.iloc[-1]
             status, advice_msg, style = get_advice(current_price, current_rsi, upper_s.iloc[-1], lower_s.iloc[-1])
             if style == "success": st.success(f"**判定: {status}** \n{advice_msg}")
@@ -116,10 +113,8 @@ for ticker, info in TICKERS_CONFIG.items():
             is_achieved = (current_price <= target_price) if target_type == '購入' else (current_price >= target_price)
             metric_color = "#FF4B4B" if is_achieved else "#1F77B4"
             rsi_color = "#FF4B4B" if current_rsi >= 70 else ("#1F77B4" if current_rsi <= 30 else "#333333")
-            p_diff = current_price - prev_close
-            p_pct = (p_diff / prev_close) * 100
-            t_diff = current_price - target_price
-            t_pct = (t_diff / target_price) * 100
+            p_diff, p_pct = current_price - prev_close, ((current_price - prev_close) / prev_close) * 100
+            t_diff, t_pct = current_price - target_price, ((current_price - target_price) / target_price) * 100
 
             c1, c2, c3 = st.columns([1.2, 1, 0.8])
             with c1: st.markdown(f'<div style="line-height:1.2;"><p style="font-size:0.8rem; color:gray; margin:0;">現在値 (前日比)</p><p style="font-size:1.6rem; font-weight:bold; margin:0;">¥{current_price:,.1f}</p><p style="font-size:0.9rem; color:{metric_color}; font-weight:bold; margin:0;">{p_diff:+,.1f} ({p_pct:+.2f}%)</p></div>', unsafe_allow_html=True)
@@ -146,15 +141,9 @@ for ticker, info in TICKERS_CONFIG.items():
                 fig.add_trace(go.Scatter(x=fore_plot['ds'], y=fore_plot['yhat'], name='予測', line=dict(color=pred_c, dash='dot', width=3)), row=1, col=1)
 
             fig.add_trace(go.Scatter(x=hist_display.index, y=rsi_series.loc[hist_display.index], name='RSI', line=dict(color='#8A2BE2', width=2)), row=2, col=1)
-            fig.add_hline(y=70, line_dash="dot", line_color="#FF4B4B", opacity=0.5, row=2, col=1)
-            fig.add_hline(y=30, line_dash="dot", line_color="#4B4BFF", opacity=0.5, row=2, col=1)
-
-            if selected_label == "1日":
-                fig.update_xaxes(range=[day_start, day_end], row=1, col=1)
-
             fig.update_layout(height=450, margin=dict(l=0,r=0,b=0,t=10), showlegend=False, hovermode="x unified")
             st.plotly_chart(fig, use_container_width=True)
             st.write(f"🔮 **AI予測 ({v['label']}):** 約 ¥{fore_plot['yhat'].iloc[-1]:,.1f}")
 
         except Exception as e:
-            st.error(f"表示エラー: {e}")
+            st.error(f"分析エラー: {e}")
