@@ -10,11 +10,13 @@ from curl_cffi import requests as requests_cffi # curl_cffiを使用
 
 # --- 1. 銘柄設定 (通信削減のため名前を固定) ---
 TICKERS_CONFIG = {
-    '5970.T': {'target': 2070, 'type': '売却', 'name': 'ジーテクト'},
-    '7272.T': {'target': 1225, 'type': '売却', 'name': 'ヤマハ発動機'},
-    '8306.T': {'target': 3050, 'type': '売却', 'name': '三菱UFJ FG'},
-    '8316.T': {'target': 5700, 'type': '売却', 'name': '三井住友 FG'},
-    '9101.T': {'target': 4950, 'type': '購入', 'name': '日本郵船'},
+    '3245.T': {'target': 1111, 'type': '売却', 'name': 'ディア・ライフ'},
+    '5970.T': {'target': 1970, 'type': '売却', 'name': 'ジーテクト'},
+    '7272.T': {'target': 1082, 'type': '売却', 'name': 'ヤマハ発動機'},
+    '8306.T': {'target': 2950, 'type': '売却', 'name': '三菱UFJ'},
+    '9101.T': {'target': 5050, 'type': '売却', 'name': '郵船'},
+    '3790.T': {'target': 3770, 'type': '購入', 'name': 'ディーエムエス'},
+    '5406.T': {'target': 2250, 'type': '購入', 'name': '神戸製鋼所'},
 }
 
 st.set_page_config(page_title="Stock Advisor", layout="centered")
@@ -147,3 +149,4 @@ for ticker, info in TICKERS_CONFIG.items():
 
         except Exception as e:
             st.error(f"分析エラー: {e}")
+
