@@ -1,5 +1,5 @@
-streamlit
-yfinance
-pandas
-plotly
+yfinance>=0.2.40
+curl_cffi
 prophet
+plotly
+pandas
